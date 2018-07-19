@@ -72,6 +72,7 @@ This has been tested with the following apps:
 
  - Instagram  
  - Snapchat
+ - Hangouts
 
 Open an issue if you find that other apps work or don't work.
 

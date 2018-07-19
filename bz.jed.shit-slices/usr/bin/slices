@@ -188,8 +188,6 @@ function defineAppPaths {
         echo "CANNOT FIND APP EXTENSIONS DATA"
         exit 1;
     fi
-
-    debugVars
 }
 
 function debugVars {
