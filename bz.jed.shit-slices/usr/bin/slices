@@ -4,12 +4,13 @@
 
 ### VARIABLES
 
-APP_NAME=$1
-ACTION=$2
-PROFILE_NAME=$3
+APP_NAME="$1"
+ACTION="$2"
+PROFILE_NAME="$3"
 NO_LAUNCH=$4
 
 BUNDLE_ID=""
+BUNDLE_PATH=""
 EXECUTABLE=$APP_NAME
 DATA_BUNDLE_ID=""
 GROUP_BUNDLE_ID=()
@@ -20,12 +21,14 @@ MP_ROOT="/private/var/mobile/slices"
 APP_ROOT="/var/containers/Bundle/Application"
 APP_GROUP_DATA_ROOT="/var/mobile/Containers/Shared/AppGroup"
 APP_DATA_ROOT="/var/mobile/Containers/Data/Application"
+APP_EXTENSIONS_DATA_ROOT="/var/mobile/Containers/Data/PluginKitPlugin"
 
 PLIST="$MP_ROOT/profiles.plist"
 APP_DATA_PLIST="/private/var/mobile/slices_app_data.plist"
 APP_GROUP_PLIST="/private/var/mobile/slices_app_group.plist"
 
 APP_GROUP_DATA_GUID=()
+APP_EXTENSIONS_DATA_GUID=()
 APP_DATA_GUID=""
 APP_INDEX=""
 
@@ -70,12 +73,14 @@ function defineBundleIds {
                             if [ "$APP_NAME" == "$this_name" ]; then
                                 BUNDLE_ID=$(plutil -key CFBundleIdentifier "$APP_FOLDER/Info.plist")
                                 EXECUTABLE=$(plutil -key CFBundleExecutable "$APP_FOLDER/Info.plist")
+                                BUNDLE_PATH="$APP_FOLDER"
                             fi
                             
                             local this_name=$(plutil -key CFBundleDisplayName "$APP_FOLDER/Info.plist" 2> /dev/null)
                             if [ "$APP_NAME" == "$this_name" ]; then
                                 BUNDLE_ID=$(plutil -key CFBundleIdentifier "$APP_FOLDER/Info.plist")
                                 EXECUTABLE=$(plutil -key CFBundleExecutable "$APP_FOLDER/Info.plist")
+                                BUNDLE_PATH="$APP_FOLDER"
                             fi
                         fi
                     fi
@@ -91,23 +96,30 @@ function defineBundleIds {
 
     # get others from stored plist lookups
     if [ -f "$APP_DATA_PLIST" ]; then
-        DATA_BUNDLE_ID=$(plutil -key $APP_NAME "$APP_DATA_PLIST" 2> /dev/null)
-    fi
-    if [ -f "$APP_GROUP_PLIST" ]; then
-        local entries=$(plutil -key $APP_NAME "$APP_GROUP_PLIST" 2> /dev/null)
-        GROUP_BUNDLE_ID=()
-        for entry in $entries
-        do
-            if [ "$entry" != "(" ] && [ "$entry" != ")" ]; then
-                temp="${entry//','/''}"  
-                temp="${temp%\"}"
-                temp="${temp#\"}"
-                GROUP_BUNDLE_ID+=("${temp}")
-            fi
-                
-        done
+        DATA_BUNDLE_ID=$(plutil -key "$APP_NAME" "$APP_DATA_PLIST" 2> /dev/null)
     fi
 
+    # load app group IDs used by app
+    local TMP_APP_ENTITLEMENTS="/var/tmp/$EXECUTABLE.entitlements"
+
+    ldid -e "$BUNDLE_PATH/$EXECUTABLE" > "$TMP_APP_ENTITLEMENTS"
+
+    local TMP_GROUPS=$(plutil -key "com.apple.security.application-groups" "$TMP_APP_ENTITLEMENTS" 2> /dev/null)
+
+    local temp_group
+
+    for group in $TMP_GROUPS
+    do
+        if [ "$group" != "(" ] && [ "$group" != ")" ]; then
+            temp_group="${group//','/''}"  
+            temp_group="${temp_group%\"}"
+            temp_group="${temp_group#\"}"
+            GROUP_BUNDLE_ID+=("${temp_group}")
+        fi
+            
+    done
+
+    rm "$TMP_APP_ENTITLEMENTS"
 }
 
 function setup {
@@ -123,7 +135,7 @@ function setup {
 } 
 
 function defineAppPaths {
-    # Loop folders in APP_GROUP_DATA_ROOT and APP_DATA_ROOT 
+    # Loop folders in APP_GROUP_DATA_ROOT, APP_EXTENSIONS_DATA_ROOT, and APP_DATA_ROOT 
     # then locate MCMMetadataIdentifier in 
     # the .com.apple.mobile_container_manager.metadata plist file
     
@@ -143,6 +155,17 @@ function defineAppPaths {
         fi
     done
 
+    for APP_FOLDER in $APP_EXTENSIONS_DATA_ROOT/*; do
+        if [ -d ${APP_FOLDER} ]; then
+            if [ -f "$APP_FOLDER/$metadata" ]; then
+                local this_bundle_id=$(plutil -key MCMMetadataInfo -key "com.apple.MobileInstallation.ParentBundleID" "$APP_FOLDER/$metadata" 2> /dev/null)
+                if [ "$DATA_BUNDLE_ID" == "$this_bundle_id" ] || [ "$BUNDLE_ID" == "$this_bundle_id" ]; then
+                    APP_EXTENSIONS_DATA_GUID+=($(basename "$APP_FOLDER"))
+                fi
+            fi
+        fi
+    done
+
     for APP_FOLDER in $APP_DATA_ROOT/*; do
         if [ -d ${APP_FOLDER} ]; then
             if [ -f "$APP_FOLDER/$metadata" ]; then
@@ -154,11 +177,19 @@ function defineAppPaths {
         fi
     done
 
-    local items=${#APP_GROUP_DATA_GUID[@]}
-    if [ $items -gt 0 ] && [[ -z "$APP_DATA_GUID" ]]; then
+    local group_items=${#APP_GROUP_DATA_GUID[@]}
+    if [ $group_items -gt 0 ] && [[ -z "$APP_DATA_GUID" ]]; then
         echo "CANNOT FIND APP DATA"
         exit 1;
     fi
+
+    local extension_items=${#APP_EXTENSIONS_DATA_GUID[@]}
+    if [ $extension_items -gt 0 ] && [[ -z "$APP_EXTENSIONS_DATA_GUID" ]]; then
+        echo "CANNOT FIND APP EXTENSIONS DATA"
+        exit 1;
+    fi
+
+    debugVars
 }
 
 function debugVars {
@@ -167,8 +198,9 @@ function debugVars {
     echo "ACTION: $ACTION"
     echo "PROFILE_NAME: $PROFILE_NAME"
     echo "BUNDLE_ID: $BUNDLE_ID"
+    echo "BUNDLE_PATH: $BUNDLE_PATH"
     echo "DATA_BUNDLE_ID: $DATA_BUNDLE_ID"
-    echo "GROUP_BUNDLE_ID: $GROUP_BUNDLE_ID"
+    echo "GROUP_BUNDLE_ID: ${GROUP_BUNDLE_ID[@]}"
 
     echo "PLIST: $PLIST"
     echo "APP_DATA_PLIST: $APP_DATA_PLIST"
@@ -176,6 +208,7 @@ function debugVars {
 
     echo "APP_GROUP_DATA_GUID: $APP_GROUP_DATA_GUID"
     echo "APP_DATA_GUID: $APP_DATA_GUID"
+    echo "APP_EXTENSIONS_DATA_GUID: ${APP_EXTENSIONS_DATA_GUID[@]}"
 
     echo "APP_COUNT: $APP_COUNT"
     echo "APP_INDEX: $APP_INDEX"
@@ -235,6 +268,16 @@ function backupData {
         #echo "cp -a ${APP_GROUP_DATA_ROOT}/${GUID}/. ${this_group_path}"
     done
 
+    for GUID in "${APP_EXTENSIONS_DATA_GUID[@]}"
+    do
+        local this_extension_data=$MP_ROOT/$BUNDLE_ID/$GUID.EXTENSION.$this_profile
+        rm -rf ${this_extension_data}
+        mkdir -p ${this_extension_data}
+        cp -a ${APP_EXTENSIONS_DATA_ROOT}/${GUID}/. ${this_extension_data}        
+        # echo "rm -rf ${this_extension_data}"
+        # echo "mkdir -p ${this_extension_data}"
+        #echo "cp -a ${APP_EXTENSIONS_DATA_ROOT}/${GUID}/. ${this_extension_data}"
+    done
 
 
     local this_data_path=$MP_ROOT/$BUNDLE_ID/$APP_DATA_GUID.DATA.$this_profile
@@ -277,9 +320,9 @@ function restoreData {
 
     fi
 
-    local items=$(plutil -key APP_GROUP_DATA_GUID_$APP_INDEX "$PLIST")
-    if [[ ! -z "$items" ]]; then
-        APP_GROUP_DATA_GUID=(${items//;/ })
+    local group_items=$(plutil -key APP_GROUP_DATA_GUID_$APP_INDEX "$PLIST")
+    if [[ ! -z "$group_items" ]]; then
+        APP_GROUP_DATA_GUID=(${group_items//;/ })
         for GUID in "${APP_GROUP_DATA_GUID[@]}"
         do
             local this_group_path=$MP_ROOT/$BUNDLE_ID/$GUID.GROUP.$this_profile
@@ -299,6 +342,27 @@ function restoreData {
         done
     fi
 
+    local extension_items=$(plutil -key APP_EXTENSIONS_DATA_GUID_$APP_INDEX "$PLIST")
+    if [[ ! -z "$extension_items" ]]; then
+        APP_EXTENSIONS_DATA_GUID=(${extension_items//;/ })
+        for GUID in "${APP_EXTENSIONS_DATA_GUID[@]}"
+        do
+            local this_extensions_data_path=$MP_ROOT/$BUNDLE_ID/$GUID.EXTENSION.$this_profile
+
+            if [ ! -d "$this_extensions_data_path" ]; then
+                echo "PROFILE EXTENSIONS DATA MISSING at PATH: $this_extensions_data_path"
+                exit 1
+            fi
+
+            rm -rf ${APP_EXTENSIONS_DATA_ROOT}/${GUID}
+            mkdir -p ${APP_EXTENSIONS_DATA_ROOT}/${GUID}
+            cp -a ${this_extensions_data_path}/. ${APP_EXTENSIONS_DATA_ROOT}/${GUID} 
+            #echo "rm -rf ${APP_EXTENSIONS_DATA_ROOT}/${GUID}"
+            #echo "mkdir -p ${APP_EXTENSIONS_DATA_ROOT}/${GUID}"
+            #echo "cp -a ${this_extensions_data_path}/. ${APP_EXTENSIONS_DATA_ROOT}/${GUID}"
+
+        done
+    fi
 }
 
 validate
@@ -325,15 +389,23 @@ if [ "$ACTION" == "create" ]; then
         plutil -key APP_COUNT -string $APP_COUNT $PLIST
         plutil -key "APP_NAME_$APP_INDEX" -string "$APP_NAME" $PLIST
         plutil -key "BUNDLE_ID_$APP_INDEX" -string $BUNDLE_ID $PLIST
-        plutil -key "EXECUTABLE_$APP_INDEX" -string $EXECUTABLE $PLIST
+        plutil -key "EXECUTABLE_$APP_INDEX" -string "$EXECUTABLE" $PLIST
         plutil -key "PROFILES_$APP_INDEX" -array $PLIST
         plutil -key "PROFILES_$APP_INDEX" -arrayadd -string $ORIG_PROFILE_NAME $PLIST
         
-        items=${#APP_GROUP_DATA_GUID[@]}
-        if [[ ! -z "$items" ]]; then
-            if [ $items -gt 0 ]; then                
+        group_items=${#APP_GROUP_DATA_GUID[@]}
+        if [[ ! -z "$group_items" ]]; then
+            if [ $group_items -gt 0 ]; then                
                 joined=$(printf ";%s" "${APP_GROUP_DATA_GUID[@]}")
                 plutil -key "APP_GROUP_DATA_GUID_$APP_INDEX" -string $joined $PLIST
+            fi
+        fi
+
+        extension_items=${#APP_EXTENSIONS_DATA_GUID[@]}
+        if [[ ! -z "$extension_items" ]]; then
+            if [ $extension_items -gt 0 ]; then                
+                joined=$(printf ";%s" "${APP_EXTENSIONS_DATA_GUID[@]}")
+                plutil -key "APP_EXTENSIONS_DATA_GUID_$APP_INDEX" -string $joined $PLIST
             fi
         fi
 
@@ -381,9 +453,14 @@ if [ "$ACTION" == "apply" ]; then
     APP_DATA_GUID=$(plutil -key "APP_DATA_GUID_$APP_INDEX" $PLIST)
     EXECUTABLE=$(plutil -key "EXECUTABLE_$APP_INDEX" $PLIST)
 
-    items=$(plutil -key "APP_GROUP_DATA_GUID_$APP_INDEX" $PLIST)
-    if [[ ! -z "$items" ]]; then
-        APP_GROUP_DATA_GUID=(${items//;/ })
+    group_items=$(plutil -key "APP_GROUP_DATA_GUID_$APP_INDEX" $PLIST)
+    if [[ ! -z "$group_items" ]]; then
+        APP_GROUP_DATA_GUID=(${group_items//;/ })
+    fi
+
+    extension_items=$(plutil -key "APP_EXTENSIONS_DATA_GUID_$APP_INDEX" $PLIST)
+    if [[ ! -z "$extension_items" ]]; then
+        APP_EXTENSIONS_DATA_GUID=(${extension_items//;/ })
     fi
 
 

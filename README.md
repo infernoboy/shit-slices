@@ -81,3 +81,5 @@ Activator - https://rpetri.ch/repo/ https://github.com/rpetrich
 
 PlUtil - http://repo.bingner.com http://github.com/sbingner
 
+Link Identity Editor 2 - http://jakeashacks.com/cydia
+
