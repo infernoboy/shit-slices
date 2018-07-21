@@ -96,3 +96,6 @@ PlUtil - http://repo.bingner.com http://github.com/sbingner
 
 Link Identity Editor 2 - http://jakeashacks.com/cydia
 
+## Originally created by
+
+jlippold - https://github.com/jlippold/shit-slices
