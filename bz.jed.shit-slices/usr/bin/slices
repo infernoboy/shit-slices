@@ -26,9 +26,9 @@ APP_EXTENSIONS_DATA_ROOT="/private/var/mobile/Containers/Data/PluginKitPlugin"
 PLIST="$MP_ROOT/profiles.plist"
 APP_DATA_PLIST="/private/var/mobile/slices_app_data.plist"
 
-APP_GROUP_DATA_GUID=()
-APP_EXTENSIONS_DATA_GUID=()
-APP_DATA_GUID=""
+APP_GROUP_DATA_UUID=()
+APP_EXTENSIONS_DATA_UUID=()
+APP_DATA_UUID=""
 APP_INDEX=""
 
 if [ "$1" == "reset" ]; then
@@ -84,6 +84,24 @@ function property {
             plutil "${DictPath[@]}" -array "$PLIST" > /dev/null 2>&1
             plutil "${DictPath[@]}" -arrayadd -string "$@" "$PLIST" > /dev/null
         fi
+    elif [[ "$1" == "-arrayremove" ]]; then
+        shift
+
+        local ValueCheck=`plutil "${DictPath[@]}" "$PLIST" 2> /dev/null`
+
+        if [[ -z "$ValueCheck" ]]; then
+            plutil "${DictPath[@]}" -array "$PLIST" > /dev/null 2>&1
+        fi
+
+        local CurrentArray=($(propertyToArray "$OrigKeyPath"))
+
+        property "$OrigKeyPath" -remove
+
+        for element in "${CurrentArray[@]}"; do
+            if [ "$element" != "$1" ]; then
+                property "$OrigKeyPath" -arrayadd "$element"
+            fi
+        done
     else
         plutil "${DictPath[@]}" "$@" "$PLIST"
     fi
@@ -153,6 +171,12 @@ function validate {
             exit 1
         fi
 
+        if [ "$SLICE_NAME" == "$ORIG_SLICE_NAME" ]; then
+            echo "Cannot use $ORIG_SLICE_NAME as slice name!"
+
+            exit 1
+        fi
+
         echo "Creating slice: $SLICE_NAME"
     elif [ "$ACTION" == "apply" ]; then
         if [[ -z "$SLICE_NAME" ]]; then
@@ -161,16 +185,21 @@ function validate {
         fi
 
         echo "Applying slice: $SLICE_NAME"
+    elif [ "$ACTION" == "original" ]; then
+        echo "Applying original slice..."
+
+        $0 "$APP_NAME" apply _original
     elif [ "$ACTION" == "clean" ]; then
         echo "Removing all slices..."
+    elif [ "$ACTION" == "remove" ]; then
+        if [[ -z "$SLICE_NAME" ]]; then
+            echo "Missing slice name"
+            exit 1
+        fi
+
+        echo "Removing slice: $SLICE_NAME"
     else
         echo "Unknown action"
-        exit 1
-    fi
-
-    if [ "$SLICE_NAME" == "$ORIG_SLICE_NAME" ]; then
-        echo "Cannot use $ORIG_SLICE_NAME as slice name!"
-
         exit 1
     fi
 }
@@ -258,7 +287,7 @@ function defineAppPaths {
                 do
                     if [ "$id" == "$this_bundle_id" ] || [ "$BUNDLE_ID" == "$this_bundle_id" ] || [[ "$this_bundle_id" == *"$BUNDLE_ID" ]]; then
                         local fld=$(basename "$APP_FOLDER")
-                        APP_GROUP_DATA_GUID+=("${fld}")
+                        APP_GROUP_DATA_UUID+=("${fld}")
                     fi
                 done
             fi
@@ -270,7 +299,7 @@ function defineAppPaths {
             if [ -f "$APP_FOLDER/$metadata" ]; then
                 local this_bundle_id=$(plutil -key MCMMetadataInfo -key "com.apple.MobileInstallation.ParentBundleID" "$APP_FOLDER/$metadata" 2> /dev/null)
                 if [ "$DATA_BUNDLE_ID" == "$this_bundle_id" ] || [ "$BUNDLE_ID" == "$this_bundle_id" ]; then
-                    APP_EXTENSIONS_DATA_GUID+=($(basename "$APP_FOLDER"))
+                    APP_EXTENSIONS_DATA_UUID+=($(basename "$APP_FOLDER"))
                 fi
             fi
         fi
@@ -281,15 +310,15 @@ function defineAppPaths {
             if [ -f "$APP_FOLDER/$metadata" ]; then
                 local this_bundle_id=$(plutil -key MCMMetadataIdentifier "$APP_FOLDER/$metadata" 2> /dev/null)
                 if [ "$DATA_BUNDLE_ID" == "$this_bundle_id" ] || [ "$BUNDLE_ID" == "$this_bundle_id" ]; then
-                    APP_DATA_GUID=$(basename "$APP_FOLDER")
+                    APP_DATA_UUID=$(basename "$APP_FOLDER")
                 fi
             fi
         fi
     done
 
-    local group_items=${#APP_GROUP_DATA_GUID[@]}
+    local GroupItems=${#APP_GROUP_DATA_UUID[@]}
 
-    if [ $group_items -gt 0 ] && [[ -z "$APP_DATA_GUID" ]]; then
+    if [ $GroupItems -gt 0 ] && [[ -z "$APP_DATA_UUID" ]]; then
         echo "Couldn't find app data!"
 
         exit 1
@@ -309,9 +338,9 @@ function debugVars {
     echo "PLIST: $PLIST"
     echo "APP_DATA_PLIST: $APP_DATA_PLIST"
 
-    echo "APP_GROUP_DATA_GUID: $APP_GROUP_DATA_GUID"
-    echo "APP_DATA_GUID: $APP_DATA_GUID"
-    echo "APP_EXTENSIONS_DATA_GUID: ${APP_EXTENSIONS_DATA_GUID[@]}"
+    echo "APP_GROUP_DATA_UUID: $APP_GROUP_DATA_UUID"
+    echo "APP_DATA_UUID: $APP_DATA_UUID"
+    echo "APP_EXTENSIONS_DATA_UUID: ${APP_EXTENSIONS_DATA_UUID[@]}"
 }
 
 function hasSlice {
@@ -331,43 +360,43 @@ function backupData {
 
     echo "- Backing up shared data..."
 
-    for GUID in "${APP_GROUP_DATA_GUID[@]}"
+    for UUID in "${APP_GROUP_DATA_UUID[@]}"
     do
-        local GroupPath="$ProfilePath/Groups/$GUID"
+        local GroupPath="$ProfilePath/Groups/$UUID"
 
         rm -rf ${GroupPath}
         mkdir -p ${GroupPath}
-        cp -a ${APP_GROUP_DATA_ROOT}/${GUID}/. ${GroupPath}        
+        cp -a ${APP_GROUP_DATA_ROOT}/${UUID}/. ${GroupPath}        
         # echo "rm -rf ${GroupPath}"
         # echo "mkdir -p ${GroupPath}"
-        #echo "cp -a ${APP_GROUP_DATA_ROOT}/${GUID}/. ${GroupPath}"
+        #echo "cp -a ${APP_GROUP_DATA_ROOT}/${UUID}/. ${GroupPath}"
     done
 
     echo "- Backing up extension data..."
 
-    for GUID in "${APP_EXTENSIONS_DATA_GUID[@]}"
+    for UUID in "${APP_EXTENSIONS_DATA_UUID[@]}"
     do
-        local ExtensionPath="$ProfilePath/Extensions/$GUID"
+        local ExtensionPath="$ProfilePath/Extensions/$UUID"
 
         rm -rf ${ExtensionPath}
         mkdir -p ${ExtensionPath}
-        cp -a ${APP_EXTENSIONS_DATA_ROOT}/${GUID}/. ${ExtensionPath}        
+        cp -a ${APP_EXTENSIONS_DATA_ROOT}/${UUID}/. ${ExtensionPath}        
         # echo "rm -rf ${ExtensionPath}"
         # echo "mkdir -p ${ExtensionPath}"
-        #echo "cp -a ${APP_EXTENSIONS_DATA_ROOT}/${GUID}/. ${ExtensionPath}"
+        #echo "cp -a ${APP_EXTENSIONS_DATA_ROOT}/${UUID}/. ${ExtensionPath}"
     done
 
     echo "- Backing up app data..."
 
-    local DataPath="$ProfilePath/Data/$APP_DATA_GUID"
+    local DataPath="$ProfilePath/Data/$APP_DATA_UUID"
 
-    if [[ ! -z "$APP_DATA_GUID" ]]; then
+    if [[ ! -z "$APP_DATA_UUID" ]]; then
         rm -rf ${DataPath}
         mkdir -p ${DataPath}
-        cp -a ${APP_DATA_ROOT}/${APP_DATA_GUID}/. ${DataPath}      
+        cp -a ${APP_DATA_ROOT}/${APP_DATA_UUID}/. ${DataPath}      
         # echo "rm -rf ${DataPath}"
         # echo "mkdir -p ${DataPath}"
-        # echo "cp -a ${APP_DATA_ROOT}/${APP_DATA_GUID}/. ${DataPath}"
+        # echo "cp -a ${APP_DATA_ROOT}/${APP_DATA_UUID}/. ${DataPath}"
     fi
 
     echo "- Finished backing up slice $1"
@@ -379,7 +408,7 @@ function restoreData {
     echo "Restoring slice: $1"
 
     if ! hasSlice "$1"; then
-        echo "There is no slice named $1 for $APP_NAME"
+        echo "There is no slice named $1 for app."
         exit 1
     fi
 
@@ -387,64 +416,64 @@ function restoreData {
 
     echo "- Restoring shared data..."
 
-    APP_GROUP_DATA_GUID=($(propertyToArray "${BundleProfile}:Groups"))
+    APP_GROUP_DATA_UUID=($(propertyToArray "${BundleProfile}:Groups"))
 
-    for GUID in "${APP_GROUP_DATA_GUID[@]}"; do
-        local GroupPath="$ProfilePath/Groups/$GUID"
+    for UUID in "${APP_GROUP_DATA_UUID[@]}"; do
+        local GroupPath="$ProfilePath/Groups/$UUID"
 
         if [ ! -d "$GroupPath" ]; then
             echo "Group data missing at path: $this_group_path"
             exit 1
         fi
 
-        rm -rf ${APP_GROUP_DATA_ROOT}/${GUID}
-        mkdir -p ${APP_GROUP_DATA_ROOT}/${GUID}
-        cp -a ${this_group_path}/. ${APP_GROUP_DATA_ROOT}/${GUID} 
-        #echo "rm -rf ${APP_GROUP_DATA_ROOT}/${GUID}"
-        #echo "mkdir -p ${APP_GROUP_DATA_ROOT}/${GUID}"
-        #echo "cp -a ${this_group_path}/. ${APP_GROUP_DATA_ROOT}/${GUID}"
+        rm -rf ${APP_GROUP_DATA_ROOT}/${UUID}
+        mkdir -p ${APP_GROUP_DATA_ROOT}/${UUID}
+        cp -a ${this_group_path}/. ${APP_GROUP_DATA_ROOT}/${UUID} 
+        #echo "rm -rf ${APP_GROUP_DATA_ROOT}/${UUID}"
+        #echo "mkdir -p ${APP_GROUP_DATA_ROOT}/${UUID}"
+        #echo "cp -a ${this_group_path}/. ${APP_GROUP_DATA_ROOT}/${UUID}"
 
     done
 
     echo "- Restoring extension data..."
 
-    APP_EXTENSIONS_DATA_GUID=($(propertyToArray "${BundleProfile}:Extensions"))
+    APP_EXTENSIONS_DATA_UUID=($(propertyToArray "${BundleProfile}:Extensions"))
 
-    for GUID in "${APP_EXTENSIONS_DATA_GUID[@]}"; do
-        local ExtensionPath="$ProfilePath/Extensions/$GUID"
+    for UUID in "${APP_EXTENSIONS_DATA_UUID[@]}"; do
+        local ExtensionPath="$ProfilePath/Extensions/$UUID"
 
         if [ ! -d "$ExtensionPath" ]; then
             echo "Extension data missing at path: $ExtensionPath"
             exit 1
         fi
 
-        rm -rf ${APP_EXTENSIONS_DATA_ROOT}/${GUID}
-        mkdir -p ${APP_EXTENSIONS_DATA_ROOT}/${GUID}
-        cp -a ${ExtensionPath}/. ${APP_EXTENSIONS_DATA_ROOT}/${GUID} 
-        #echo "rm -rf ${APP_EXTENSIONS_DATA_ROOT}/${GUID}"
-        #echo "mkdir -p ${APP_EXTENSIONS_DATA_ROOT}/${GUID}"
-        #echo "cp -a ${ExtensionPath}/. ${APP_EXTENSIONS_DATA_ROOT}/${GUID}"
+        rm -rf ${APP_EXTENSIONS_DATA_ROOT}/${UUID}
+        mkdir -p ${APP_EXTENSIONS_DATA_ROOT}/${UUID}
+        cp -a ${ExtensionPath}/. ${APP_EXTENSIONS_DATA_ROOT}/${UUID} 
+        #echo "rm -rf ${APP_EXTENSIONS_DATA_ROOT}/${UUID}"
+        #echo "mkdir -p ${APP_EXTENSIONS_DATA_ROOT}/${UUID}"
+        #echo "cp -a ${ExtensionPath}/. ${APP_EXTENSIONS_DATA_ROOT}/${UUID}"
 
     done
 
     echo "- Restoring app data..."
 
-    APP_DATA_GUID=$(property "${BundleProfile}:Data")
+    APP_DATA_UUID=$(property "${BundleProfile}:Data")
 
-    if [[ ! -z "$APP_DATA_GUID" ]]; then
-        local DataPath="$ProfilePath/Data/$APP_DATA_GUID"
+    if [[ ! -z "$APP_DATA_UUID" ]]; then
+        local DataPath="$ProfilePath/Data/$APP_DATA_UUID"
 
         if [ ! -d "$DataPath" ]; then
             echo "App data missing at path: $DataPath"
             exit 1
         fi
 
-        rm -rf ${APP_DATA_ROOT}/${APP_DATA_GUID}
-        mkdir -p ${APP_DATA_ROOT}/${APP_DATA_GUID}
-        cp -a ${DataPath}/. ${APP_DATA_ROOT}/${APP_DATA_GUID} 
-        #echo "rm -rf ${APP_DATA_ROOT}/${APP_DATA_GUID}"
-        #echo "mkdir -p ${APP_DATA_ROOT}/${APP_DATA_GUID}"
-        #echo "cp -a ${DataPath}/. ${APP_DATA_ROOT}/${APP_DATA_GUID}"
+        rm -rf ${APP_DATA_ROOT}/${APP_DATA_UUID}
+        mkdir -p ${APP_DATA_ROOT}/${APP_DATA_UUID}
+        cp -a ${DataPath}/. ${APP_DATA_ROOT}/${APP_DATA_UUID} 
+        #echo "rm -rf ${APP_DATA_ROOT}/${APP_DATA_UUID}"
+        #echo "mkdir -p ${APP_DATA_ROOT}/${APP_DATA_UUID}"
+        #echo "cp -a ${DataPath}/. ${APP_DATA_ROOT}/${APP_DATA_UUID}"
 
     fi
 
@@ -466,24 +495,24 @@ if [ "$ACTION" == "create" ]; then
     property "${BundleProfile}:BundlePath" -string "$BUNDLE_PATH"
     property "${BundleProfile}:Executable" -string "$EXECUTABLE"
     
-    group_items=${#APP_GROUP_DATA_GUID[@]}
+    GroupItems=${#APP_GROUP_DATA_UUID[@]}
 
-    if [[ ! -z "$group_items" ]]; then
-        for GUID in "${APP_GROUP_DATA_GUID[@]}"; do
-            property "${BundleProfile}:Groups" -arrayadd -missing "$GUID"
+    if [[ ! -z "$GroupItems" ]]; then
+        for UUID in "${APP_GROUP_DATA_UUID[@]}"; do
+            property "${BundleProfile}:Groups" -arrayadd -missing "$UUID"
         done            
     fi
 
-    extension_items=${#APP_EXTENSIONS_DATA_GUID[@]}
+    ExtensionItems=${#APP_EXTENSIONS_DATA_UUID[@]}
 
-    if [[ ! -z "$extension_items" ]]; then
-        for GUID in "${APP_EXTENSIONS_DATA_GUID[@]}"; do
-            property "${BundleProfile}:Extensions" -arrayadd -missing "$GUID"
+    if [[ ! -z "$ExtensionItems" ]]; then
+        for UUID in "${APP_EXTENSIONS_DATA_UUID[@]}"; do
+            property "${BundleProfile}:Extensions" -arrayadd -missing "$UUID"
         done
     fi
 
-    if [[ ! -z "$APP_DATA_GUID" ]]; then
-        property "${BundleProfile}:Data" -string "$APP_DATA_GUID"
+    if [[ ! -z "$APP_DATA_UUID" ]]; then
+        property "${BundleProfile}:Data" -string "$APP_DATA_UUID"
     fi
 
     if ! hasSlice "$ORIG_SLICE_NAME"; then
@@ -520,7 +549,7 @@ if [ "$ACTION" == "apply" ]; then
     ACTIVE_SLICE=$(property "ActiveSlice:${BUNDLE_ID}")
 
     if [ "$ACTIVE_SLICE" == "$SLICE_NAME" ]; then
-        echo "Profile $SLICE_NAME is already applied"
+        echo "Slice $SLICE_NAME is already applied"
         
         if [[ -z "$NO_LAUNCH" ]]; then
             activator send $BUNDLE_ID
@@ -529,11 +558,17 @@ if [ "$ACTION" == "apply" ]; then
         exit 1
     fi
 
+    if ! hasSlice "$SLICE_NAME"; then
+        echo "There is no slice named $SLICE_NAME for app."
+
+        exit 1
+    fi
+
     EXECUTABLE=$(property "${BundleProfile}:Executable")
     
-    APP_DATA_GUID=$(property "${BundleProfile}:Data")
-    APP_GROUP_DATA_GUID=($(propertyToArray "${BundleProfile}:Groups"))
-    APP_EXTENSIONS_DATA_GUID=($(propertyToArray "${BundleProfile}:Extensions"))
+    APP_DATA_UUID=$(property "${BundleProfile}:Data")
+    APP_GROUP_DATA_UUID=($(propertyToArray "${BundleProfile}:Groups"))
+    APP_EXTENSIONS_DATA_UUID=($(propertyToArray "${BundleProfile}:Extensions"))
 
     killall "$EXECUTABLE" 2> /dev/null
     
@@ -564,6 +599,43 @@ if [ "$ACTION" == "clean" ]; then
     rm -rf "$MP_ROOT/$BUNDLE_ID"
 
     echo "Removed all slices for $APP_NAME"
+
+    exit 0
+fi
+
+if [ "$ACTION" == "remove" ]; then
+    if ! propertyExist "BundleID:${APP_NAME}"; then
+        echo "There is no saved data for $APP_NAME"
+        exit 1
+    fi
+
+    BUNDLE_ID=$(property "BundleID:${APP_NAME}")
+    BundleProfile="Profile:${BUNDLE_ID}"
+    ACTIVE_SLICE=$(property "ActiveSlice:${BUNDLE_ID}")
+
+    if [ "$ACTIVE_SLICE" == "$SLICE_NAME" ]; then
+        echo "Slice $SLICE_NAME is currently active and cannot be removed. To remove this one, apply another slice first, or use 'original' action if no other slice exist."
+        
+        exit 1
+    fi
+
+    if [ "$SLICE_NAME" == "$ORIG_SLICE_NAME" ]; then
+        echo "Original slice cannot be removed. Use 'clean' action to remove all slices for app."
+
+        exit 1
+    fi
+
+    if ! hasSlice "$SLICE_NAME"; then
+        echo "There is no slice named $SLICE_NAME for app."
+
+        exit 1
+    fi
+
+    property "Profile:${BUNDLE_ID}:Slices" -arrayremove "$SLICE_NAME"
+
+    rm -rf "$MP_ROOT/$BUNDLE_ID/slice.$SLICE_NAME"
+
+    echo "Removed slice $SLICE_NAME for $APP_NAME"
 
     exit 0
 fi
