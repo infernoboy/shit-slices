@@ -203,7 +203,8 @@ function validate {
 
         echo "Removing slice: $SLICE_NAME"
     else
-        echo "Unknown action"
+        setup
+
         exit 1
     fi
 }
@@ -282,6 +283,7 @@ function defineBundleIds {
 function setup {
     # create base
     mkdir -p "$MP_ROOT"
+    chown mobile:mobile "$MP_ROOT"
 } 
 
 function defineAppPaths {
@@ -387,6 +389,7 @@ function backupData {
         rm -rf "$GroupPath"
         mkdir -p "$GroupPath"
         cp -a "$APP_GROUP_DATA_ROOT/$UUID/." "$GroupPath"
+        chown -R mobile:mobile "$GroupPath"
     done
 
     echo "- Backing up extension data..."
@@ -398,6 +401,7 @@ function backupData {
         rm -rf "$ExtensionPath"
         mkdir -p "$ExtensionPath"
         cp -a "$APP_EXTENSIONS_DATA_ROOT/$UUID/." "$ExtensionPath"
+        chown -R mobile:mobile "$ExtensionPath"
     done
 
     echo "- Backing up app data..."
@@ -408,6 +412,7 @@ function backupData {
         rm -rf "$DataPath"
         mkdir -p "$DataPath"
         cp -a "$APP_DATA_ROOT/$APP_DATA_UUID/." "$DataPath"
+        chown -R mobile:mobile "$DataPath"
     fi
 
     echo "- Finished backing up slice $1"
@@ -440,6 +445,7 @@ function restoreData {
         rm -rf "$APP_GROUP_DATA_ROOT/$UUID"
         mkdir -p "$APP_GROUP_DATA_ROOT/$UUID"
         cp -a "$GroupPath/." "$APP_GROUP_DATA_ROOT/$UUID"
+        chown -R mobile:mobile "$APP_GROUP_DATA_ROOT/$UUID"
     done
 
     echo "- Restoring extension data..."
@@ -457,7 +463,7 @@ function restoreData {
         rm -rf "$APP_EXTENSIONS_DATA_ROOT/$UUID"
         mkdir -p "$APP_EXTENSIONS_DATA_ROOT/$UUID"
         cp -a "$ExtensionPath/." "$APP_EXTENSIONS_DATA_ROOT/$UUID"
-
+        chown -R mobile:mobile "$APP_EXTENSIONS_DATA_ROOT/$UUID"
     done
 
     echo "- Restoring app data..."
@@ -475,6 +481,7 @@ function restoreData {
         rm -rf "$APP_DATA_ROOT/$APP_DATA_UUID"
         mkdir -p "$APP_DATA_ROOT/$APP_DATA_UUID"
         cp -a "$DataPath/." "$APP_DATA_ROOT/$APP_DATA_UUID"
+        chown -R mobile:mobile "$APP_DATA_ROOT/$APP_DATA_UUID"
     fi
 
     echo "- Finished restoring slice $1"

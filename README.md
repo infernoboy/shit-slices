@@ -42,7 +42,7 @@ slices "Snapchat" apply new-slice
 slices "Snapchat" remove new-slice
 ```
 
-### Delete all slice
+### Delete all slices
 
 ```
 slices "Snapchat" clean
