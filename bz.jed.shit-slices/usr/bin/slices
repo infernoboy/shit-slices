@@ -388,7 +388,7 @@ function backupData {
 
         rm -rf "$GroupPath"
         mkdir -p "$GroupPath"
-        cp -a "$APP_GROUP_DATA_ROOT/$UUID/." "$GroupPath"
+        cp -a "$APP_GROUP_DATA_ROOT/$UUID/." "$GroupPath" 2> /dev/null
         chown -R mobile:mobile "$GroupPath"
     done
 
@@ -400,7 +400,7 @@ function backupData {
 
         rm -rf "$ExtensionPath"
         mkdir -p "$ExtensionPath"
-        cp -a "$APP_EXTENSIONS_DATA_ROOT/$UUID/." "$ExtensionPath"
+        cp -a "$APP_EXTENSIONS_DATA_ROOT/$UUID/." "$ExtensionPath" 2> /dev/null
         chown -R mobile:mobile "$ExtensionPath"
     done
 
@@ -411,7 +411,7 @@ function backupData {
     if [[ ! -z "$APP_DATA_UUID" ]]; then
         rm -rf "$DataPath"
         mkdir -p "$DataPath"
-        cp -a "$APP_DATA_ROOT/$APP_DATA_UUID/." "$DataPath"
+        cp -a "$APP_DATA_ROOT/$APP_DATA_UUID/." "$DataPath" 2> /dev/null
         chown -R mobile:mobile "$DataPath"
     fi
 
