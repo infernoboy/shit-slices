@@ -6,37 +6,34 @@
 
 APP_NAME="$1"
 ACTION="$2"
-PROFILE_NAME="$3"
+SLICE_NAME="$3"
 NO_LAUNCH=$4
 
 BUNDLE_ID=""
 BUNDLE_PATH=""
-EXECUTABLE=$APP_NAME
+EXECUTABLE="$APP_NAME"
 DATA_BUNDLE_ID=""
 GROUP_BUNDLE_ID=()
 PROFILES=()
 
-ORIG_PROFILE_NAME="original"
-MP_ROOT="/private/var/mobile/slices"
-APP_ROOT="/var/containers/Bundle/Application"
-APP_GROUP_DATA_ROOT="/var/mobile/Containers/Shared/AppGroup"
-APP_DATA_ROOT="/var/mobile/Containers/Data/Application"
-APP_EXTENSIONS_DATA_ROOT="/var/mobile/Containers/Data/PluginKitPlugin"
+ORIG_SLICE_NAME="_original"
+MP_ROOT="/private/var/mobile/Documents/Slices"
+APP_ROOT="/private/var/containers/Bundle/Application"
+APP_GROUP_DATA_ROOT="/private/var/mobile/Containers/Shared/AppGroup"
+APP_DATA_ROOT="/private/var/mobile/Containers/Data/Application"
+APP_EXTENSIONS_DATA_ROOT="/private/var/mobile/Containers/Data/PluginKitPlugin"
 
 PLIST="$MP_ROOT/profiles.plist"
 APP_DATA_PLIST="/private/var/mobile/slices_app_data.plist"
-APP_GROUP_PLIST="/private/var/mobile/slices_app_group.plist"
 
 APP_GROUP_DATA_GUID=()
 APP_EXTENSIONS_DATA_GUID=()
 APP_DATA_GUID=""
 APP_INDEX=""
 
-APP_COUNT=0
-
 if [ "$1" == "reset" ]; then
+    killall cfprefsd 2> /dev/null
     rm -rf $MP_ROOT
-    mkdir -p $MP_ROOT
     echo "Data has been reset"
     exit 0
 fi
@@ -44,20 +41,137 @@ fi
 
 ### FUNCTIONS
 
-function validate {
-
-    if [[ -z "$PROFILE_NAME" ]]; then
-        echo "MISSING PROFILE"
-        exit 1;
+function property {    
+    if [ ! -f "$PLIST" ]; then
+        plutil -create "$PLIST"
     fi
 
-    if [ "$ACTION" == "create" ]; then
-        echo "CREATING PROFILE: $PROFILE_NAME"
-    elif [ "$ACTION" == "apply" ]; then
-        echo "APPLYING PROFILE $PROFILE_NAME"
+    local Args="$@"
+    local OrigKeyPath="$1"
+    IFS=":"; local KeyPath=($1); unset IFS
+    local DictPath=()
+
+    shift
+
+    for ((i = 0; i < ${#KeyPath[@]}; ++i)); do
+        DictPath+=(-key "${KeyPath[$i]}")
+
+        local ValueCheck=`plutil "${DictPath[@]}" "$PLIST" 2> /dev/null`
+
+        if [[ ( -z "$ValueCheck" && "${#KeyPath[@]}" -ne "$((i + 1))" ) || "$?" -ne "0" ]]; then
+            plutil "${DictPath[@]}" -dict "$PLIST" > /dev/null 2>&1
+        fi
+    done
+
+    if [[ "$1" == "-arrayadd" ]]; then
+        shift
+
+        local ValueCheck=`plutil "${DictPath[@]}" "$PLIST" 2> /dev/null`
+
+        if [[ -z "$ValueCheck" ]]; then
+            plutil "${DictPath[@]}" -array "$PLIST" > /dev/null 2>&1
+        fi
+
+        if [ "$1" == "-missing" ]; then
+            shift
+
+            if propertyStringExistInArray "$OrigKeyPath" "$1"; then
+                return 0
+            fi
+        fi
+
+        if [[ -z `plutil "${DictPath[@]}" -arrayadd -string "$@" "$PLIST" 2> /dev/null` ]]; then
+            plutil "${DictPath[@]}" -array "$PLIST" > /dev/null 2>&1
+            plutil "${DictPath[@]}" -arrayadd -string "$@" "$PLIST" > /dev/null
+        fi
     else
-        echo "UNKNOWN ACTION PARAMETER"
-        exit 1;
+        plutil "${DictPath[@]}" "$@" "$PLIST"
+    fi
+}
+
+function propertyExist {
+    if [ ! -f "$PLIST" ]; then
+        plutil -create "$PLIST"
+    fi
+
+    IFS=":"; local KeyPath=($1); unset IFS
+    local DictPath=()
+
+    shift
+
+    for ((i = 0; i < ${#KeyPath[@]}; ++i)); do
+        DictPath+=(-key "${KeyPath[$i]}")
+    done
+
+    if [[ -z `plutil "${DictPath[@]}" "$PLIST" 2> /dev/null` ]]; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+function propertyToArray {
+    local prop=$(property "$1" 2> /dev/null)
+    local arr=()
+    local fixedEntry=""
+
+    for entry in $prop
+    do
+        if [ "$entry" != "(" ] && [ "$entry" != ")" ]; then
+            fixedEntry=`tr -d '"' <<< "$entry"`
+            fixedEntry="${fixedEntry//','/''}"
+
+            arr+=("$fixedEntry")
+        fi
+    done
+
+    echo "${arr[@]}"
+}
+
+function propertyStringExistInArray {
+    if propertyExist "$1"; then
+        local elements=($(propertyToArray "$1"))
+
+        for element in "${elements[@]}"; do
+            if [ "$element" == "$2" ]; then
+                return 0
+            fi
+        done
+
+        return 1
+    else
+        return 1
+    fi
+}
+
+function validate {
+    echo "App: $APP_NAME"
+
+    if [ "$ACTION" == "create" ]; then
+        if [[ -z "$SLICE_NAME" ]]; then
+            echo "Missing slice name"
+            exit 1
+        fi
+
+        echo "Creating slice: $SLICE_NAME"
+    elif [ "$ACTION" == "apply" ]; then
+        if [[ -z "$SLICE_NAME" ]]; then
+            echo "Missing slice name"
+            exit 1
+        fi
+
+        echo "Applying slice: $SLICE_NAME"
+    elif [ "$ACTION" == "clean" ]; then
+        echo "Removing all slices..."
+    else
+        echo "Unknown action"
+        exit 1
+    fi
+
+    if [ "$SLICE_NAME" == "$ORIG_SLICE_NAME" ]; then
+        echo "Cannot use $ORIG_SLICE_NAME as slice name!"
+
+        exit 1
     fi
 }
 
@@ -71,15 +185,17 @@ function defineBundleIds {
                         if [ -f "$APP_FOLDER/Info.plist" ]; then
                             local this_name=$(plutil -key CFBundleName "$APP_FOLDER/Info.plist" 2> /dev/null)
                             if [ "$APP_NAME" == "$this_name" ]; then
-                                BUNDLE_ID=$(plutil -key CFBundleIdentifier "$APP_FOLDER/Info.plist")
-                                EXECUTABLE=$(plutil -key CFBundleExecutable "$APP_FOLDER/Info.plist")
+                                BUNDLE_ID="$(plutil -key CFBundleIdentifier "$APP_FOLDER/Info.plist")"
+                                BundleProfile="Profile:${BUNDLE_ID}"
+                                EXECUTABLE="$(plutil -key CFBundleExecutable "$APP_FOLDER/Info.plist")"
                                 BUNDLE_PATH="$APP_FOLDER"
                             fi
                             
                             local this_name=$(plutil -key CFBundleDisplayName "$APP_FOLDER/Info.plist" 2> /dev/null)
                             if [ "$APP_NAME" == "$this_name" ]; then
-                                BUNDLE_ID=$(plutil -key CFBundleIdentifier "$APP_FOLDER/Info.plist")
-                                EXECUTABLE=$(plutil -key CFBundleExecutable "$APP_FOLDER/Info.plist")
+                                BUNDLE_ID="$(plutil -key CFBundleIdentifier "$APP_FOLDER/Info.plist")"
+                                BundleProfile="Profile:${BUNDLE_ID}"
+                                EXECUTABLE="$(plutil -key CFBundleExecutable "$APP_FOLDER/Info.plist")"
                                 BUNDLE_PATH="$APP_FOLDER"
                             fi
                         fi
@@ -100,7 +216,7 @@ function defineBundleIds {
     fi
 
     # load app group IDs used by app
-    local TMP_APP_ENTITLEMENTS="/var/tmp/$EXECUTABLE.entitlements"
+    local TMP_APP_ENTITLEMENTS="/private/var/tmp/$EXECUTABLE.entitlements"
 
     ldid -e "$BUNDLE_PATH/$EXECUTABLE" > "$TMP_APP_ENTITLEMENTS"
 
@@ -123,15 +239,8 @@ function defineBundleIds {
 }
 
 function setup {
-
     # create base
-    mkdir -p $MP_ROOT
-    
-    if [ ! -f "$PLIST" ]; then
-        plutil -create ${PLIST}
-        plutil -key APP_COUNT -string $APP_COUNT ${PLIST}
-    fi
-    
+    mkdir -p "$MP_ROOT"
 } 
 
 function defineAppPaths {
@@ -140,6 +249,7 @@ function defineAppPaths {
     # the .com.apple.mobile_container_manager.metadata plist file
     
     local metadata=".com.apple.mobile_container_manager.metadata.plist"
+
     for APP_FOLDER in $APP_GROUP_DATA_ROOT/*; do
         if [ -d ${APP_FOLDER} ]; then
             if [ -f "$APP_FOLDER/$metadata" ]; then
@@ -178,15 +288,11 @@ function defineAppPaths {
     done
 
     local group_items=${#APP_GROUP_DATA_GUID[@]}
-    if [ $group_items -gt 0 ] && [[ -z "$APP_DATA_GUID" ]]; then
-        echo "CANNOT FIND APP DATA"
-        exit 1;
-    fi
 
-    local extension_items=${#APP_EXTENSIONS_DATA_GUID[@]}
-    if [ $extension_items -gt 0 ] && [[ -z "$APP_EXTENSIONS_DATA_GUID" ]]; then
-        echo "CANNOT FIND APP EXTENSIONS DATA"
-        exit 1;
+    if [ $group_items -gt 0 ] && [[ -z "$APP_DATA_GUID" ]]; then
+        echo "Couldn't find app data!"
+
+        exit 1
     fi
 }
 
@@ -194,7 +300,7 @@ function debugVars {
     echo "APP_NAME: $APP_NAME"
     echo "EXECUTABLE: $EXECUTABLE"
     echo "ACTION: $ACTION"
-    echo "PROFILE_NAME: $PROFILE_NAME"
+    echo "SLICE_NAME: $SLICE_NAME"
     echo "BUNDLE_ID: $BUNDLE_ID"
     echo "BUNDLE_PATH: $BUNDLE_PATH"
     echo "DATA_BUNDLE_ID: $DATA_BUNDLE_ID"
@@ -202,243 +308,219 @@ function debugVars {
 
     echo "PLIST: $PLIST"
     echo "APP_DATA_PLIST: $APP_DATA_PLIST"
-    echo "APP_GROUP_PLIST: $APP_GROUP_PLIST"
 
     echo "APP_GROUP_DATA_GUID: $APP_GROUP_DATA_GUID"
     echo "APP_DATA_GUID: $APP_DATA_GUID"
     echo "APP_EXTENSIONS_DATA_GUID: ${APP_EXTENSIONS_DATA_GUID[@]}"
-
-    echo "APP_COUNT: $APP_COUNT"
-    echo "APP_INDEX: $APP_INDEX"
 }
 
-function getAppCount {
-    APP_COUNT=$(plutil -key APP_COUNT "$PLIST")
-    APP_COUNT=$(($APP_COUNT + 0))
-}
-
-function getAppIndexFromName {
-    getAppCount
-    if [[ $APP_COUNT != 0 ]]; then
-        for ((i=1;i<=$APP_COUNT;i++)); 
-        do 
-            local name=$(plutil -key "APP_NAME_$i" "$PLIST" 2> /dev/null)
-            if [ "$APP_NAME" == "$name" ]; then
-                APP_INDEX=$i
-            fi
-        done
+function hasSlice {
+    if propertyStringExistInArray "${BundleProfile}:Slices" "$1"; then
+        return 0
+    else
+        return 1
     fi
-}
-
-function defineProfiles {
-    local entries=$(plutil -key "PROFILES_$APP_INDEX" $PLIST)
-    PROFILES=()
-    for entry in $entries
-    do
-        if [ "$entry" != "(" ] && [ "$entry" != ")" ]; then
-            PROFILES+=("${entry//','/''}")
-        fi
-    done
-}
-
-function hasProfile {
-    defineProfiles
-    for profile in "${PROFILES[@]}"
-    do
-        if [ "$profile" == "%1" ]; then
-            return 1
-        fi
-    done
-    return 0
 }
 
 function backupData {
-    local this_profile=$1
+    killall cfprefsd 2> /dev/null
+
+    echo "Backing up slice: $1"
+
+    local ProfilePath="$MP_ROOT/$BUNDLE_ID/slice.$1"
+
+    echo "- Backing up shared data..."
 
     for GUID in "${APP_GROUP_DATA_GUID[@]}"
     do
-        local this_group_path=$MP_ROOT/$BUNDLE_ID/$GUID.GROUP.$this_profile
-        rm -rf ${this_group_path}
-        mkdir -p ${this_group_path}
-        cp -a ${APP_GROUP_DATA_ROOT}/${GUID}/. ${this_group_path}        
-        # echo "rm -rf ${this_group_path}"
-        # echo "mkdir -p ${this_group_path}"
-        #echo "cp -a ${APP_GROUP_DATA_ROOT}/${GUID}/. ${this_group_path}"
+        local GroupPath="$ProfilePath/Groups/$GUID"
+
+        rm -rf ${GroupPath}
+        mkdir -p ${GroupPath}
+        cp -a ${APP_GROUP_DATA_ROOT}/${GUID}/. ${GroupPath}        
+        # echo "rm -rf ${GroupPath}"
+        # echo "mkdir -p ${GroupPath}"
+        #echo "cp -a ${APP_GROUP_DATA_ROOT}/${GUID}/. ${GroupPath}"
     done
+
+    echo "- Backing up extension data..."
 
     for GUID in "${APP_EXTENSIONS_DATA_GUID[@]}"
     do
-        local this_extension_data=$MP_ROOT/$BUNDLE_ID/$GUID.EXTENSION.$this_profile
-        rm -rf ${this_extension_data}
-        mkdir -p ${this_extension_data}
-        cp -a ${APP_EXTENSIONS_DATA_ROOT}/${GUID}/. ${this_extension_data}        
-        # echo "rm -rf ${this_extension_data}"
-        # echo "mkdir -p ${this_extension_data}"
-        #echo "cp -a ${APP_EXTENSIONS_DATA_ROOT}/${GUID}/. ${this_extension_data}"
+        local ExtensionPath="$ProfilePath/Extensions/$GUID"
+
+        rm -rf ${ExtensionPath}
+        mkdir -p ${ExtensionPath}
+        cp -a ${APP_EXTENSIONS_DATA_ROOT}/${GUID}/. ${ExtensionPath}        
+        # echo "rm -rf ${ExtensionPath}"
+        # echo "mkdir -p ${ExtensionPath}"
+        #echo "cp -a ${APP_EXTENSIONS_DATA_ROOT}/${GUID}/. ${ExtensionPath}"
     done
 
+    echo "- Backing up app data..."
 
-    local this_data_path=$MP_ROOT/$BUNDLE_ID/$APP_DATA_GUID.DATA.$this_profile
+    local DataPath="$ProfilePath/Data/$APP_DATA_GUID"
+
     if [[ ! -z "$APP_DATA_GUID" ]]; then
-        rm -rf ${this_data_path}
-        mkdir -p ${this_data_path}
-        cp -a ${APP_DATA_ROOT}/${APP_DATA_GUID}/. ${this_data_path}      
-        # echo "rm -rf ${this_data_path}"
-        # echo "mkdir -p ${this_data_path}"
-        # echo "cp -a ${APP_DATA_ROOT}/${APP_DATA_GUID}/. ${this_data_path}"
+        rm -rf ${DataPath}
+        mkdir -p ${DataPath}
+        cp -a ${APP_DATA_ROOT}/${APP_DATA_GUID}/. ${DataPath}      
+        # echo "rm -rf ${DataPath}"
+        # echo "mkdir -p ${DataPath}"
+        # echo "cp -a ${APP_DATA_ROOT}/${APP_DATA_GUID}/. ${DataPath}"
     fi
+
+    echo "- Finished backing up slice $1"
 }
 
 function restoreData {
+    killall cfprefsd 2> /dev/null
 
-    local this_profile=$1
+    echo "Restoring slice: $1"
 
-    hasProfile $this_profile
-    if [ "$?" == 1 ]; then
-        echo "There is no profile named $this_profile for $APP_NAME"
+    if ! hasSlice "$1"; then
+        echo "There is no slice named $1 for $APP_NAME"
         exit 1
     fi
-    
-    # copy the files from back to original location
-    APP_DATA_GUID=$(plutil -key APP_DATA_GUID_$APP_INDEX "$PLIST")
-    if [[ ! -z "$APP_DATA_GUID" ]]; then
-        local this_group_path=$MP_ROOT/$BUNDLE_ID/$APP_DATA_GUID.DATA.$this_profile
 
-        if [ ! -d "$this_group_path" ]; then
-            echo "PROFILE DATA MISSING at PATH: $this_group_path"
+    local ProfilePath="$MP_ROOT/$BUNDLE_ID/slice.$1"
+
+    echo "- Restoring shared data..."
+
+    APP_GROUP_DATA_GUID=($(propertyToArray "${BundleProfile}:Groups"))
+
+    for GUID in "${APP_GROUP_DATA_GUID[@]}"; do
+        local GroupPath="$ProfilePath/Groups/$GUID"
+
+        if [ ! -d "$GroupPath" ]; then
+            echo "Group data missing at path: $this_group_path"
+            exit 1
+        fi
+
+        rm -rf ${APP_GROUP_DATA_ROOT}/${GUID}
+        mkdir -p ${APP_GROUP_DATA_ROOT}/${GUID}
+        cp -a ${this_group_path}/. ${APP_GROUP_DATA_ROOT}/${GUID} 
+        #echo "rm -rf ${APP_GROUP_DATA_ROOT}/${GUID}"
+        #echo "mkdir -p ${APP_GROUP_DATA_ROOT}/${GUID}"
+        #echo "cp -a ${this_group_path}/. ${APP_GROUP_DATA_ROOT}/${GUID}"
+
+    done
+
+    echo "- Restoring extension data..."
+
+    APP_EXTENSIONS_DATA_GUID=($(propertyToArray "${BundleProfile}:Extensions"))
+
+    for GUID in "${APP_EXTENSIONS_DATA_GUID[@]}"; do
+        local ExtensionPath="$ProfilePath/Extensions/$GUID"
+
+        if [ ! -d "$ExtensionPath" ]; then
+            echo "Extension data missing at path: $ExtensionPath"
+            exit 1
+        fi
+
+        rm -rf ${APP_EXTENSIONS_DATA_ROOT}/${GUID}
+        mkdir -p ${APP_EXTENSIONS_DATA_ROOT}/${GUID}
+        cp -a ${ExtensionPath}/. ${APP_EXTENSIONS_DATA_ROOT}/${GUID} 
+        #echo "rm -rf ${APP_EXTENSIONS_DATA_ROOT}/${GUID}"
+        #echo "mkdir -p ${APP_EXTENSIONS_DATA_ROOT}/${GUID}"
+        #echo "cp -a ${ExtensionPath}/. ${APP_EXTENSIONS_DATA_ROOT}/${GUID}"
+
+    done
+
+    echo "- Restoring app data..."
+
+    APP_DATA_GUID=$(property "${BundleProfile}:Data")
+
+    if [[ ! -z "$APP_DATA_GUID" ]]; then
+        local DataPath="$ProfilePath/Data/$APP_DATA_GUID"
+
+        if [ ! -d "$DataPath" ]; then
+            echo "App data missing at path: $DataPath"
             exit 1
         fi
 
         rm -rf ${APP_DATA_ROOT}/${APP_DATA_GUID}
         mkdir -p ${APP_DATA_ROOT}/${APP_DATA_GUID}
-        cp -a ${this_group_path}/. ${APP_DATA_ROOT}/${APP_DATA_GUID} 
+        cp -a ${DataPath}/. ${APP_DATA_ROOT}/${APP_DATA_GUID} 
         #echo "rm -rf ${APP_DATA_ROOT}/${APP_DATA_GUID}"
         #echo "mkdir -p ${APP_DATA_ROOT}/${APP_DATA_GUID}"
-        #echo "cp -a ${this_group_path}/. ${APP_DATA_ROOT}/${APP_DATA_GUID}"
+        #echo "cp -a ${DataPath}/. ${APP_DATA_ROOT}/${APP_DATA_GUID}"
 
     fi
 
-    local group_items=$(plutil -key APP_GROUP_DATA_GUID_$APP_INDEX "$PLIST")
-    if [[ ! -z "$group_items" ]]; then
-        APP_GROUP_DATA_GUID=(${group_items//;/ })
-        for GUID in "${APP_GROUP_DATA_GUID[@]}"
-        do
-            local this_group_path=$MP_ROOT/$BUNDLE_ID/$GUID.GROUP.$this_profile
-
-            if [ ! -d "$this_group_path" ]; then
-                echo "PROFILE DATA MISSING at PATH: $this_group_path"
-                exit 1
-            fi
-
-            rm -rf ${APP_GROUP_DATA_ROOT}/${GUID}
-            mkdir -p ${APP_GROUP_DATA_ROOT}/${GUID}
-            cp -a ${this_group_path}/. ${APP_GROUP_DATA_ROOT}/${GUID} 
-            #echo "rm -rf ${APP_GROUP_DATA_ROOT}/${GUID}"
-            #echo "mkdir -p ${APP_GROUP_DATA_ROOT}/${GUID}"
-            #echo "cp -a ${this_group_path}/. ${APP_GROUP_DATA_ROOT}/${GUID}"
-
-        done
-    fi
-
-    local extension_items=$(plutil -key APP_EXTENSIONS_DATA_GUID_$APP_INDEX "$PLIST")
-    if [[ ! -z "$extension_items" ]]; then
-        APP_EXTENSIONS_DATA_GUID=(${extension_items//;/ })
-        for GUID in "${APP_EXTENSIONS_DATA_GUID[@]}"
-        do
-            local this_extensions_data_path=$MP_ROOT/$BUNDLE_ID/$GUID.EXTENSION.$this_profile
-
-            if [ ! -d "$this_extensions_data_path" ]; then
-                echo "PROFILE EXTENSIONS DATA MISSING at PATH: $this_extensions_data_path"
-                exit 1
-            fi
-
-            rm -rf ${APP_EXTENSIONS_DATA_ROOT}/${GUID}
-            mkdir -p ${APP_EXTENSIONS_DATA_ROOT}/${GUID}
-            cp -a ${this_extensions_data_path}/. ${APP_EXTENSIONS_DATA_ROOT}/${GUID} 
-            #echo "rm -rf ${APP_EXTENSIONS_DATA_ROOT}/${GUID}"
-            #echo "mkdir -p ${APP_EXTENSIONS_DATA_ROOT}/${GUID}"
-            #echo "cp -a ${this_extensions_data_path}/. ${APP_EXTENSIONS_DATA_ROOT}/${GUID}"
-
-        done
-    fi
+    echo "- Finished restoring slice $1"
 }
 
 validate
 setup 
 
 if [ "$ACTION" == "create" ]; then
-
     defineBundleIds
     defineAppPaths 
-    getAppIndexFromName
 
     killall "$EXECUTABLE" 2> /dev/null
 
-    if [[ -z "$APP_INDEX" ]]; then 
+    property "BundleID:${APP_NAME}" -string "$BUNDLE_ID"
 
-        echo "CREATING ORIGINAL $APP_INDEX"
-
-        APP_COUNT=$(($APP_COUNT + 1))
-        APP_INDEX=$APP_COUNT
-
+    property "${BundleProfile}:AppName" -string "$APP_NAME"
+    property "${BundleProfile}:BundlePath" -string "$BUNDLE_PATH"
+    property "${BundleProfile}:Executable" -string "$EXECUTABLE"
     
-        # this is a new app, so make a clone of the original
-        # create original profile info
-        plutil -key APP_COUNT -string $APP_COUNT $PLIST
-        plutil -key "APP_NAME_$APP_INDEX" -string "$APP_NAME" $PLIST
-        plutil -key "BUNDLE_ID_$APP_INDEX" -string $BUNDLE_ID $PLIST
-        plutil -key "EXECUTABLE_$APP_INDEX" -string "$EXECUTABLE" $PLIST
-        plutil -key "PROFILES_$APP_INDEX" -array $PLIST
-        plutil -key "PROFILES_$APP_INDEX" -arrayadd -string $ORIG_PROFILE_NAME $PLIST
-        
-        group_items=${#APP_GROUP_DATA_GUID[@]}
-        if [[ ! -z "$group_items" ]]; then
-            if [ $group_items -gt 0 ]; then                
-                joined=$(printf ";%s" "${APP_GROUP_DATA_GUID[@]}")
-                plutil -key "APP_GROUP_DATA_GUID_$APP_INDEX" -string $joined $PLIST
-            fi
-        fi
+    group_items=${#APP_GROUP_DATA_GUID[@]}
 
-        extension_items=${#APP_EXTENSIONS_DATA_GUID[@]}
-        if [[ ! -z "$extension_items" ]]; then
-            if [ $extension_items -gt 0 ]; then                
-                joined=$(printf ";%s" "${APP_EXTENSIONS_DATA_GUID[@]}")
-                plutil -key "APP_EXTENSIONS_DATA_GUID_$APP_INDEX" -string $joined $PLIST
-            fi
-        fi
-
-        if [[ ! -z "$APP_DATA_GUID" ]]; then
-            plutil -key "APP_DATA_GUID_$APP_INDEX" -string $APP_DATA_GUID $PLIST
-        fi
-        
-        #backup files
-        backupData $ORIG_PROFILE_NAME
+    if [[ ! -z "$group_items" ]]; then
+        for GUID in "${APP_GROUP_DATA_GUID[@]}"; do
+            property "${BundleProfile}:Groups" -arrayadd -missing "$GUID"
+        done            
     fi
 
-    # add new profile if doesnt exist
-    hasProfile $PROFILE_NAME
-    if [ "$?" == 0 ]; then
-        plutil -key "PROFILES_$APP_INDEX" -arrayadd -string $PROFILE_NAME $PLIST
+    extension_items=${#APP_EXTENSIONS_DATA_GUID[@]}
+
+    if [[ ! -z "$extension_items" ]]; then
+        for GUID in "${APP_EXTENSIONS_DATA_GUID[@]}"; do
+            property "${BundleProfile}:Extensions" -arrayadd -missing "$GUID"
+        done
     fi
 
-    plutil -key "CURRENT_PROFILE_$APP_INDEX" -string $PROFILE_NAME $PLIST
-    
-    backupData $PROFILE_NAME
-    # debugVars
+    if [[ ! -z "$APP_DATA_GUID" ]]; then
+        property "${BundleProfile}:Data" -string "$APP_DATA_GUID"
+    fi
+
+    if ! hasSlice "$ORIG_SLICE_NAME"; then
+        echo "Creating original slice for $APP_NAME"
+
+        property "${BundleProfile}:Slices" -arrayadd -missing "$ORIG_SLICE_NAME"
+
+        backupData "$ORIG_SLICE_NAME"
+    fi
+
+    property "ActiveSlice:${BUNDLE_ID}" -string "$SLICE_NAME"
+
+    if hasSlice "$SLICE_NAME"; then
+        echo "Slice already exist: $SLICE_NAME"
+
+        exit 1
+    else
+        property "${BundleProfile}:Slices" -arrayadd -missing "$SLICE_NAME"
+
+        backupData "$SLICE_NAME"
+    fi
+
     exit 0
 fi
 
 if [ "$ACTION" == "apply" ]; then
-    getAppIndexFromName
-    if [[ -z "$APP_INDEX" ]]; then
+    if ! propertyExist "BundleID:${APP_NAME}"; then
         echo "There is no saved data for $APP_NAME"
         exit 1
     fi
 
-    CURRENT_PROFILE=$(plutil -key "CURRENT_PROFILE_$APP_INDEX" $PLIST)
-    BUNDLE_ID=$(plutil -key "BUNDLE_ID_$APP_INDEX" $PLIST)
-    if [ "$CURRENT_PROFILE" == "$PROFILE_NAME" ]; then
-        echo "Profile $PROFILE_NAME is already applied"
+    BUNDLE_ID=$(property "BundleID:${APP_NAME}")
+    BundleProfile="Profile:${BUNDLE_ID}"
+    ACTIVE_SLICE=$(property "ActiveSlice:${BUNDLE_ID}")
+
+    if [ "$ACTIVE_SLICE" == "$SLICE_NAME" ]; then
+        echo "Profile $SLICE_NAME is already applied"
         
         if [[ -z "$NO_LAUNCH" ]]; then
             activator send $BUNDLE_ID
@@ -446,29 +528,42 @@ if [ "$ACTION" == "apply" ]; then
         
         exit 1
     fi
+
+    EXECUTABLE=$(property "${BundleProfile}:Executable")
     
-    BUNDLE_ID=$(plutil -key "BUNDLE_ID_$APP_INDEX" $PLIST)
-    APP_DATA_GUID=$(plutil -key "APP_DATA_GUID_$APP_INDEX" $PLIST)
-    EXECUTABLE=$(plutil -key "EXECUTABLE_$APP_INDEX" $PLIST)
-
-    group_items=$(plutil -key "APP_GROUP_DATA_GUID_$APP_INDEX" $PLIST)
-    if [[ ! -z "$group_items" ]]; then
-        APP_GROUP_DATA_GUID=(${group_items//;/ })
-    fi
-
-    extension_items=$(plutil -key "APP_EXTENSIONS_DATA_GUID_$APP_INDEX" $PLIST)
-    if [[ ! -z "$extension_items" ]]; then
-        APP_EXTENSIONS_DATA_GUID=(${extension_items//;/ })
-    fi
-
+    APP_DATA_GUID=$(property "${BundleProfile}:Data")
+    APP_GROUP_DATA_GUID=($(propertyToArray "${BundleProfile}:Groups"))
+    APP_EXTENSIONS_DATA_GUID=($(propertyToArray "${BundleProfile}:Extensions"))
 
     killall "$EXECUTABLE" 2> /dev/null
     
-    backupData $CURRENT_PROFILE
-    restoreData $PROFILE_NAME
-    plutil -key "CURRENT_PROFILE_$APP_INDEX" -string $PROFILE_NAME $PLIST
+    backupData "$ACTIVE_SLICE"
+    restoreData "$SLICE_NAME"
+
+    property "ActiveSlice:${BUNDLE_ID}" -string "$SLICE_NAME"
+
     if [[ -z "$NO_LAUNCH" ]]; then
         activator send $BUNDLE_ID
     fi
+
+    exit 0
+fi
+
+if [ "$ACTION" == "clean" ]; then
+    if ! propertyExist "BundleID:${APP_NAME}"; then
+        echo "There is no saved data for $APP_NAME"
+        exit 1
+    fi
+
+    BUNDLE_ID=$(property "BundleID:${APP_NAME}")
+
+    property "ActiveSlice:${BUNDLE_ID}" -remove
+    property "BundleID:${APP_NAME}" -remove
+    property "Profile:${BUNDLE_ID}" -remove
+
+    rm -rf "$MP_ROOT/$BUNDLE_ID"
+
+    echo "Removed all slices for $APP_NAME"
+
     exit 0
 fi
