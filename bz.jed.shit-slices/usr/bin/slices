@@ -605,6 +605,7 @@ function removeData {
 }
 
 function fixPermissions {
+    chown mobile:mobile "$PROFILES"
     chown -R mobile:mobile "$MP_ROOT/$BUNDLE_ID";
 }
 
