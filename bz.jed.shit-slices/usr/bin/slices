@@ -318,6 +318,7 @@ function reinstallApp {
 
     echo "Updating paths in profile..."
 
+    defineApp
     defineAppPaths
 
     echo "Reinstalled app."
