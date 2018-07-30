@@ -379,6 +379,8 @@ function defineAppPaths {
     else
         echo "Searching for shared data..."
 
+        property "$PROFILES" "${BundleProfile}:Groups" -remove > /dev/null
+
         for APP_FOLDER in "$APP_GROUP_DATA_ROOT"/*; do
             if [ -d "$APP_FOLDER" ]; then
                 if [ -f "$APP_FOLDER/$METADATA" ]; then
@@ -398,6 +400,8 @@ function defineAppPaths {
 
         echo "Searching for extension data..."
 
+        property "$PROFILES" "${BundleProfile}:Extensions" -remove > /dev/null
+
         for APP_FOLDER in "$APP_EXTENSIONS_DATA_ROOT"/*; do
             if [ -d "$APP_FOLDER" ]; then
                 if [ -f "$APP_FOLDER/$METADATA" ]; then
@@ -416,6 +420,8 @@ function defineAppPaths {
         done
 
         echo "Searching for app data..."
+
+        property "$PROFILES" "${BundleProfile}:Data" -remove > /dev/null
 
         for APP_FOLDER in "$APP_DATA_ROOT"/*; do
             if [ -d "$APP_FOLDER" ]; then
