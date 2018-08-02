@@ -212,6 +212,8 @@ function validate {
         echo "Removing data for active slice..."
     elif [ "$ACTION" == "reinstall" ]; then
         reinstallApp
+    elif [ "$ACTION" == "list" ]; then
+        listSlices
     else
         exit 123
     fi
@@ -363,6 +365,16 @@ function defineAppPaths {
             IFS=":" read -r -a info_array <<< "$info"
 
             APP_GROUP_DATA_UUID_MAP[${info_array[0]}]="${info_array[1]}"
+
+            if [ ! d "$APP_GROUP_DATA_ROOT/${info_array[1]}"]; then
+                echo "Invalid group path saved for app, running full search..."
+
+                CORRECT_PATHS_ARE_SAVED=0
+
+                defineAppPaths
+
+                return 0
+            fi
         done
 
         echo "Setting up path for extension data..."
@@ -371,11 +383,31 @@ function defineAppPaths {
             IFS=":" read -r -a info_array <<< "$info"
 
             APP_EXTENSIONS_DATA_UUID_MAP[${info_array[0]}]="${info_array[1]}"
+
+            if [ ! d "$APP_EXTENSIONS_DATA_ROOT/${info_array[1]}"]; then
+                echo "Invalid extension path saved for app, running full search..."
+
+                CORRECT_PATHS_ARE_SAVED=0
+
+                defineAppPaths
+
+                return 0
+            fi
         done
 
         echo "Setting up path for app data..."
 
         APP_DATA_UUID=$(property "$PROFILES" "${BundleProfile}:Data")
+
+        if [ ! -d "$APP_DATA_ROOT/$APP_DATA_UUID" ]; then
+            echo "Invalid extension path saved for app, running full search..."
+
+            CORRECT_PATHS_ARE_SAVED=0
+
+            defineAppPaths
+
+            return 0
+        fi
     else
         echo "Searching for shared data..."
 
@@ -586,6 +618,7 @@ function copyData {
 
     if [[ "$3" != "1" ]]; then
         cp -a "${1:?}"/. "${2:?}"
+        rm -rf "${2:?}/Library/Caches"
     else
         cp "${1:?}/$METADATA" "${2:?}"
     fi
@@ -607,6 +640,14 @@ function removeData {
 function fixPermissions {
     chown mobile:mobile "$PROFILES"
     chown -R mobile:mobile "$MP_ROOT/$BUNDLE_ID";
+}
+
+function listSlices {
+    defineApp
+
+    local AppSlices=($(propertyToArray "$PROFILES" "${BundleProfile}:Slices"))
+
+    echo "Slices: ${AppSlices[@]}"
 }
 
 validate 
