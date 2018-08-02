@@ -366,7 +366,7 @@ function defineAppPaths {
 
             APP_GROUP_DATA_UUID_MAP[${info_array[0]}]="${info_array[1]}"
 
-            if [ ! d "$APP_GROUP_DATA_ROOT/${info_array[1]}" ]; then
+            if [ ! -d "$APP_GROUP_DATA_ROOT/${info_array[1]}" ]; then
                 echo "Invalid group path saved for app, running full search..."
 
                 CORRECT_PATHS_ARE_SAVED=0
@@ -384,7 +384,7 @@ function defineAppPaths {
 
             APP_EXTENSIONS_DATA_UUID_MAP[${info_array[0]}]="${info_array[1]}"
 
-            if [ ! d "$APP_EXTENSIONS_DATA_ROOT/${info_array[1]}" ]; then
+            if [ ! -d "$APP_EXTENSIONS_DATA_ROOT/${info_array[1]}" ]; then
                 echo "Invalid extension path saved for app, running full search..."
 
                 CORRECT_PATHS_ARE_SAVED=0
