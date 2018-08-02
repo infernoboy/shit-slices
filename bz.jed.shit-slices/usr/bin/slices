@@ -647,7 +647,19 @@ function listSlices {
 
     local AppSlices=($(propertyToArray "$PROFILES" "${BundleProfile}:Slices"))
 
-    echo "Slices: ${AppSlices[@]}"
+    ACTIVE_SLICE=$(property "$PROFILES" "ActiveSlice:${BUNDLE_ID}")
+
+    echo "Slices:"
+
+    for sliceName in "${AppSlices[@]}"; do
+        echo -n "- $sliceName"
+
+        if [[ "$sliceName" == "$ACTIVE_SLICE" ]]; then
+            echo " (active)"
+        else
+            echo
+        fi
+    done
 }
 
 validate 
